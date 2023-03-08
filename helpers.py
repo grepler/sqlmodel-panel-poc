@@ -1,4 +1,4 @@
-from collections import UserDict
+from collections import UserDict, UserList
 from typing import Callable
 
 import logging
@@ -102,5 +102,50 @@ class DynamicAttrDefaultDictList(UserDict):
         return list(self.data.keys())
                 # + super().__dir__()
 
+
+# This is inspired /copied from https://docs.sqlalchemy.org/en/20/orm/collection_api.html#custom-collection-implementations
+from sqlalchemy.orm.collections import attribute_mapped_collection
+
+import operator
+
+
+class OptionedList(list):
+    def __init__(self, optionspath: str, parentpath: str=None):
+        super().__init__()
+        # print(f'instantiated an OptionedList')
+        self._optionspath = optionspath
+        self._attrgetter = operator.attrgetter(self._optionspath)
+
+        # dirty hack to preserve a reference to the parent entity so that SQLAlchemy references can be queries directly
+        # this is important because SQLAlchemy may decide to change the pointers to the list objects at any time,
+        # so we must fetch them directly off of the SQLModel, not simply pass the list objects through.
+        if parentpath is not None:
+            self._parentpath = parentpath
+            self._parentattrgetter = operator.attrgetter(self._parentpath)
+
+    @property
+    def options(self):
+        return self._attrgetter(self)
+
+    @property
+    def parent(self):
+        return self._parentattrgetter(self)
     
-    
+     ############## TESTING W STANDARD ATTRIBUTES, UNNECESSARY #############
+
+    # def __setitem__(self, index, item):
+    #     print(f'setitem called with: {item=}')
+    #     super().__setitem__(index, item)
+
+    # def insert(self, index, item):
+    #     print(f'insert called with {item=}')
+    #     super().insert(index, item)
+
+    # def append(self, item):
+    #     print(f'append called with {item=}')
+    #     super().append(item)
+
+    # def extend(self, other):
+    #     print(f'extend called with {other=}')
+    #     super().extend(other)
+

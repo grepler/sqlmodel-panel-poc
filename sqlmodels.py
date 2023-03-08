@@ -6,10 +6,10 @@ import sqlite_utils
 
 from collections import defaultdict
 
-from helpers import DynamicAttrDefaultDictList
+from helpers import DynamicAttrDefaultDictList, OptionedList
 
 from sqlalchemy import event, and_
-from sqlalchemy.orm import validates, object_session
+from sqlalchemy.orm import validates, object_session, relationship
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.ext.associationproxy import AssociationProxy
 from sqlmodel import Field, Session, SQLModel, Relationship, create_engine, select
@@ -64,9 +64,13 @@ class Dataset(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     table: str = Field(index=True, description="the name of the sqlite table containing this dataset")
-    fields: List["DataField"] = Relationship(back_populates="dataset", 
-                                             sa_relationship_kwargs={'cascade': 'all, delete-orphan', 'lazy':'joined'}
-                                            )
+    fields: List["DataField"] = Relationship(
+        back_populates="dataset", 
+        sa_relationship_kwargs={
+            'cascade': 'all, delete-orphan', 
+            'lazy':'joined', 
+            },
+        )
 
     beediscovery_id: int = Field(default=1, index=True, foreign_key="__beediscovery.id")
     beediscovery: Optional["BeeDiscovery"] = Relationship(back_populates="datasets")
@@ -265,33 +269,48 @@ class DataField(SQLModel, table=True):
     dataset: Optional[Dataset] = Relationship(back_populates="fields")
     
     
-    roles: List["DataRole"] = Relationship(back_populates="fields", link_model=DataFieldRoleLink)
+    #: DataRoles list
+    #: When <someobject>.role is set to a string, a new, anonymous Role() object
+    #: is created with that name and assigned to <someobject>._role.   However it
+    #: does not have a database id.  This will have to be fixed later when the
+    #: object is associated with a Session where we will replace this
+    #: Role() object with the correct one.
+    
+    #: We are using the UniqueObject pattern/recipe here, because we want the Roles to be globally unique.
+    #: https://github.com/sqlalchemy/sqlalchemy/wiki/UniqueObjectValidatedOnPending
+    roles: OptionedList["DataRole"] = Relationship(back_populates="fields", link_model=DataFieldRoleLink,
+    sa_relationship_kwargs={
+            # 'cascade': 'all, delete-orphan', 
+            'lazy':'joined', 
+            'collection_class': lambda: OptionedList(
+                optionspath='_sa_adapter.owner_state.object.roles_available',
+                parentpath='_sa_adapter.owner_state.object'),
+            },
+            )
     
 
     #: the same 'field_roles'->'role' proxy as in the basic dictionary example.
     #: This maps the Role_Value to the Role Name
-    # _r:  List["DataRole"] = association_proxy(
-    #         'roles',
-    #         'name',
-    #         creator=lambda role: DataRole(name=name)
-    #     )
-    # Association Proxies aren't working, so we will define an hybrid property to handle this.
+    #: _r:  List["DataRole"] = association_proxy(
+    #:         'roles',
+    #:         'name',
+    #:         creator=lambda role: DataRole(name=name)
+    #:     )
+    #: Association Proxies aren't working, so we will define an hybrid property to handle this.
     @property
     def r(self) -> list[DataRole]:
         return [x.name for x in self.roles]
     
+    @property
+    def roles_available(self):
+        """
+        Return the list of DataRoles which can be applied to this DataField.
+        """
+        available = self.dataset.roles_available.copy()
+        available.extend([x for x in self.roles if x not in available])
+
+        return available
     
-    """ When <someobject>.role is set to a string, a new, anonymous Role() object
-    is created with that name and assigned to <someobject>._role.   However it
-    does not have a database id.  This will have to be fixed later when the
-    object is associated with a Session where we will replace this
-    Role() object with the correct one.
-    
-    We are using the UniqueObject pattern/recipe here, because we want the Roles to be globally unique.
-    https://github.com/sqlalchemy/sqlalchemy/wiki/UniqueObjectValidatedOnPending
-    
-    This means that 
-    """
 
     def first_nonblank(self, n:int=1):
         """
